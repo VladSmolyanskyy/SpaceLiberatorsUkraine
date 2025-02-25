@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doge Defender</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            overflow: hidden;
+            background-color: #000;
+            font-family: Arial, sans-serif;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+        }
+        #gameContainer {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+        canvas {
+            background-color: #000;
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #gameInfo {
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            opacity: 0;
+            transition: opacity 1s;
+            pointer-events: none;
+            z-index: 10;
+        }
+        #gameOverScreen, #gameWinScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+        }
+        #gameOverScreen {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+        }
+        #gameWinScreen {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: #ffd700;
+        }
+        .gameScreenContent {
+            font-size: 32px;
+            text-align: center;
+        }
+        .restart {
+            margin-top: 20px;
+            font-size: 24px;
+            color: #66ff66;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="gameInfo">
+            <h1>Doge Defender</h1>
+            <p>Arrow keys/WASD to move, Space to shoot</p>
+            <p>Collect powerups and reach $1,000,000,000!</p>
+        </div>
+        <div id="gameOverScreen">
+            <div class="gameScreenContent">
+                <div>GAME OVER</div>
+                <div class="restart">Press 'R' to restart</div>
+            </div>
+        </div>
+        <div id="gameWinScreen">
+            <div class="gameScreenContent">
+                <div>YOU WIN!</div>
+                <div>You've reached $1,000,000,000!</div>
+                <div class="restart">Press 'R' to play again</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Game variables
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameInfo = document.getElementById('gameInfo');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const gameWinScreen = document.getElementById('gameWinScreen');
+        
+        // Create shootSound object
+        const shootSound = new Audio('shoot.mp3');
+        shootSound.volume = 0.5;
+        
+        // Function to play shooting sound
+        function playShootSound() {
+            try {
+                // Clone the sound to allow overlapping sounds
+                shootSound.currentTime = 0;
+                shootSound.play().catch(e => {
+                    console.log("Could not play sound:", e);
+                });
+            } catch (e) {
+                console.log("Error playing sound:", e);
+            }
+        }
+        
+        // Set canvas to full window size
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        
+        // Initialize canvas size
+        resizeCanvas();
+        
+        // Game state
+        let gameRunning = false;
+        let score = 0;
+        let winScore = 1000000000;
+        let lives = 3;
+        let powerupCount = 1;
+        let shieldActive = false;
+        let shieldDuration = 0;
+        const maxShieldDuration = 600; // 10 seconds at 60fps
+        let moneyPopups = [];
+        let difficultyFactor = 1;
+        
+        // Hero properties
+        const hero = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            width: 50,
+            height: 30,
+            velocityX: 0,
+            velocityY: 0,
+            maxSpeed: 5,
+            acceleration: 0.2,
+            friction: 0.98,
+            rotation: 0,
+            rotationSpeed: 0.1,
+            thrust: false,
+            bullets: [],
+            invulnerable: false,
+            invulnerabilityTime: 0,
+            maxInvulnerabilityTime: 120 // 2 seconds at 60fps
+        };
+        
+        // Enemies
+        let enemies = [];
+        const enemyWidth = 55;
+        const enemyHeight = 35;
+        const enemy2Width = 70;
+        const enemy2Height = 45;
+        const enemyBaseValue = 10000000;
+        const enemy2BaseValue = 25000000;
+        const maxEnemies = 10;
+        const warningDistance = 100;
+        
+        // Powerups
+        let powerups = [];
+        const powerupSize = 30;
+        const powerupFrequency = 0.005;
+        const weaponPowerupChance = 0.7;
+        
+        // Controls
+        const keys = {};
+        
+        // Heart icon for lives (simple shape)
+        function drawHeart(x, y, size) {
+            ctx.save();
+            ctx.fillStyle = '#FF5555';
+            ctx.beginPath();
+            ctx.moveTo(x, y + size * 0.3);
+            ctx.bezierCurveTo(x, y, x - size / 2, y, x - size / 2, y + size * 0.3);
+            ctx.bezierCurveTo(x - size / 2, y + size * 0.6, x, y + size * 0.9, x, y + size * 1.2);
+            ctx.bezierCurveTo(x, y + size * 0.9, x + size / 2, y + size * 0.6, x + size / 2, y + size * 0.3);
+            ctx.bezierCurveTo(x + size / 2, y, x, y, x, y + size * 0.3);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+        
+        // Load images
+        function loadImage(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    resolve(img);
+                };
+                img.onerror = (err) => {
+                    console.log('Failed to load image: ' + src);
+                    // Resolve with a dummy image to prevent game failure
+                    // Create a placeholder canvas
+                    const placeholderCanvas = document.createElement('canvas');
+                    placeholderCanvas.width = 50;
+                    placeholderCanvas.height = 50;
+                    const pctx = placeholderCanvas.getContext('2d');
+                    pctx.fillStyle = 'red';
+                    pctx.fillRect(0, 0, 50, 50);
+                    pctx.fillStyle = 'white';
+                    pctx.font = '10px Arial';
+                    pctx.fillText('Error', 10, 25);
+                    
+                    const placeholder = new Image();
+                    placeholder.src = placeholderCanvas.toDataURL();
+                    resolve(placeholder);
+                };
+                img.src = src;
+            });
+        }
+        
+        // Start loading images
+        Promise.all([
+            loadImage('hero.jpg'),
+            loadImage('enemy.jpg'),
+            loadImage('enemy2.jpg'),
+            loadImage('powerup.jpg'),
+            loadImage('bubble.png')
+        ]).then(([heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg]) => {
+            // Show game info for a few seconds
+            gameInfo.style.opacity = '1';
+            setTimeout(() => {
+                gameInfo.style.opacity = '0';
+            }, 3000);
+            
+            // Initialize game
+            init(heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg);
+        }).catch(err => {
+            console.error('Error loading images:', err);
+        });
+        
+        // Add a money popup at a given location
+        function addMoneyPopup(x, y, amount) {
+            moneyPopups.push({
+                x: x,
+                y: y,
+                amount: amount,
+                lifespan: 60, // 1 second at 60fps
+                opacity: 1.0,
+                velocityY: -1.5,
+                scale: 1.0
+            });
+        }
+        
+        // Calculate current difficulty based on score progress towards win
+        function updateDifficulty() {
+            // Scales from 1.0 at start to 2.0 at max score
+            difficultyFactor = 1.0 + (score / winScore);
+            
+            // Cap at 2.0 for sanity
+            if (difficultyFactor > 2.0) difficultyFactor = 2.0;
+            
+            // Adjust max enemies based on difficulty
+            return Math.floor(maxEnemies * difficultyFactor);
+        }
+        
+        // Initialize game
+        function init(heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg) {
+            gameRunning = true;
+            score = 0;
+            lives = 3;
+            powerupCount = 1;
+            shieldActive = false;
+            shieldDuration = 0;
+            difficultyFactor = 1;
+            
+            // Reset hero
+            hero.x = canvas.width / 2 - hero.width / 2;
+            hero.y = canvas.height / 2 - hero.height / 2;
+            hero.rotation = 0;
+            hero.velocityX = 0;
+            hero.velocityY = 0;
+            hero.thrust = false;
+            hero.bullets = [];
+            hero.invulnerable = false;
+            hero.invulnerabilityTime = 0;
+            
+            // Clear arrays
+            enemies = [];
+            powerups = [];
+            moneyPopups = [];
+            
+            // Hide game screens
+            gameOverScreen.style.display = 'none';
+            gameWinScreen.style.display = 'none';
+            
+            // Add some enemies
+            for (let i = 0; i < 5; i++) {
+                spawnEnemy(enemyImg, enemy2Img);
+            }
+            
+            // Start game loop
+            gameLoop(heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg);
+        }
+        
+        // Spawn an enemy
+        function spawnEnemy(enemyImg, enemy2Img) {
+            // Determine enemy type - higher chance of enemy2 as difficulty increases
+            const isType2 = Math.random() < (0.2 * difficultyFactor);
+            
+            // Set dimensions based on enemy type
+            const width = isType2 ? enemy2Width : enemyWidth;
+            const height = isType2 ? enemy2Height : enemyHeight;
+            
+            let x, y;
+            let tooClose = true;
+            
+            // Keep trying positions until we find one that's not too close to the hero
+            while (tooClose) {
+                // Decide whether to spawn just off-screen
+                const offScreen = Math.random() < 0.7; // 70% chance to spawn off-screen
+                
+                if (offScreen) {
+                    // Choose a side to spawn from (0=top, 1=right, 2=bottom, 3=left)
+                    const side = Math.floor(Math.random() * 4);
+                    
+                    switch(side) {
+                        case 0: // Top
+                            x = Math.random() * canvas.width;
+                            y = -height * 2;
+                            break;
+                        case 1: // Right
+                            x = canvas.width + width * 2;
+                            y = Math.random() * canvas.height;
+                            break;
+                        case 2: // Bottom
+                            x = Math.random() * canvas.width;
+                            y = canvas.height + height * 2;
+                            break;
+                        case 3: // Left
+                            x = -width * 2;
+                            y = Math.random() * canvas.height;
+                            break;
+                    }
+                } else {
+                    x = Math.random() * (canvas.width - width);
+                    y = Math.random() * (canvas.height - height);
+                }
+                
+                // Check distance to hero
+                const dx = x - hero.x;
+                const dy = y - hero.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance > 200) {
+                    tooClose = false;
+                }
+            }
+            
+            // Speed scales with difficulty
+            const speedFactor = 0.5 + (difficultyFactor * 0.5);
+            const speedX = (Math.random() - 0.5) * 3 * speedFactor;
+            const speedY = (Math.random() - 0.5) * 3 * speedFactor;
+            
+            // Value varies by enemy type and has some randomness
+            const baseValue = isType2 ? enemy2BaseValue : enemyBaseValue;
+            const value = baseValue * (1 + Math.random() * 2);
+            
+            enemies.push({
+                x: x,
+                y: y,
+                width: width,
+                height: height,
+                speedX: speedX,
+                speedY: speedY,
+                rotation: Math.random() * Math.PI * 2,
+                value: value,
+                type: isType2 ? 2 : 1,
+                health: isType2 ? 2 : 1,
+                img: isType2 ? enemy2Img : enemyImg
+            });
+        }
+        
+        // Spawn a powerup
+        function spawnPowerup(powerupImg, bubbleImg) {
+            const x = Math.random() * (canvas.width - powerupSize);
+            const y = Math.random() * (canvas.height - powerupSize);
+            
+            // Determine powerup type
+            const isWeaponPowerup = Math.random() < weaponPowerupChance;
+            
+            powerups.push({
+                x: x,
+                y: y,
+                width: powerupSize,
+                height: powerupSize,
+                type: isWeaponPowerup ? 'weapon' : 'shield',
+                img: isWeaponPowerup ? powerupImg : bubbleImg
+            });
+        }
+        
+        // Fire bullets from the hero
+        function fireBullet() {
+            // Calculate direction based on hero rotation
+            const angle = hero.rotation;
+            
+            // Fire multiple bullets if powerups have been collected
+            for (let i = 0; i < powerupCount; i++) {
+                // Adjust angle slightly for each additional bullet
+                const bulletAngle = angle + (i - (powerupCount - 1) / 2) * 0.1;
+                
+                hero.bullets.push({
+                    x: hero.x + hero.width / 2,
+                    y: hero.y + hero.height / 2,
+                    radius: 3,
+                    speedX: Math.sin(bulletAngle) * 10,
+                    speedY: -Math.cos(bulletAngle) * 10,
+                    lifespan: 60 // Frames until bullet disappears
+                });
+            }
+            
+            // Play sound
+            playShootSound();
+        }
+        
+        // Update game state
+        function update(heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg) {
+            if (!gameRunning) return;
+            
+            // Update difficulty based on score
+            const currentMaxEnemies = updateDifficulty();
+            
+            // Update shield duration if active
+            if (shieldActive) {
+                shieldDuration--;
+                if (shieldDuration <= 0) {
+                    shieldActive = false;
+                }
+            }
+            
+            // Update invulnerability after being hit
+            if (hero.invulnerable) {
+                hero.invulnerabilityTime--;
+                if (hero.invulnerabilityTime <= 0) {
+                    hero.invulnerable = false;
+                }
+            }
+            
+            // Update money popups
+            for (let i = moneyPopups.length - 1; i >= 0; i--) {
+                const popup = moneyPopups[i];
+                popup.y += popup.velocityY;
+                popup.lifespan--;
+                popup.opacity = popup.lifespan / 60;
+                popup.scale += 0.02;
+                
+                if (popup.lifespan <= 0) {
+                    moneyPopups.splice(i, 1);
+                }
+            }
+            
+            // Set thrust state
+            hero.thrust = keys['ArrowUp'] || keys['w'];
+            
+            // Apply thrust if key is pressed
+            if (hero.thrust) {
+                hero.velocityX += Math.sin(hero.rotation) * hero.acceleration;
+                hero.velocityY -= Math.cos(hero.rotation) * hero.acceleration;
+            }
+            
+            // Apply rotation
+            if (keys['ArrowLeft'] || keys['a']) {
+                hero.rotation -= hero.rotationSpeed;
+            }
+            if (keys['ArrowRight'] || keys['d']) {
+                hero.rotation += hero.rotationSpeed;
+            }
+            
+            // Apply friction
+            hero.velocityX *= hero.friction;
+            hero.velocityY *= hero.friction;
+            
+            // Limit maximum speed
+            const speed = Math.sqrt(hero.velocityX * hero.velocityX + hero.velocityY * hero.velocityY);
+            if (speed > hero.maxSpeed) {
+                const ratio = hero.maxSpeed / speed;
+                hero.velocityX *= ratio;
+                hero.velocityY *= ratio;
+            }
+            
+            // Update position
+            hero.x += hero.velocityX;
+            hero.y += hero.velocityY;
+            
+            // Wrap around screen edges
+            if (hero.x < -hero.width) hero.x = canvas.width;
+            if (hero.x > canvas.width) hero.x = -hero.width;
+            if (hero.y < -hero.height) hero.y = canvas.height;
+            if (hero.y > canvas.height) hero.y = -hero.height;
+            
+            // Update bullets
+            for (let i = hero.bullets.length - 1; i >= 0; i--) {
+                const bullet = hero.bullets[i];
+                bullet.x += bullet.speedX;
+                bullet.y += bullet.speedY;
+                
+                // Remove bullets that go off screen or expire
+                if (bullet.x < 0 || bullet.x > canvas.width || 
+                    bullet.y < 0 || bullet.y > canvas.height ||
+                    bullet.lifespan <= 0) {
+                    hero.bullets.splice(i, 1);
+                } else {
+                    bullet.lifespan--;
+                }
+            }
+            
+            // Update enemies
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                
+                // Move enemy
+                enemy.x += enemy.speedX;
+                enemy.y += enemy.speedY;
+                enemy.rotation += 0.02;
+                
+                // Wrap around screen edges
+                if (enemy.x < -enemy.width) enemy.x = canvas.width;
+                if (enemy.x > canvas.width) enemy.x = -enemy.width;
+                if (enemy.y < -enemy.height) enemy.y = canvas.height;
+                if (enemy.y > canvas.height) enemy.y = -enemy.height;
+                
+                // Check for collisions with bullets
+                for (let j = hero.bullets.length - 1; j >= 0; j--) {
+                    const bullet = hero.bullets[j];
+                    
+                    // Simple collision detection
+                    if (
+                        bullet.x + bullet.radius > enemy.x &&
+                        bullet.x - bullet.radius < enemy.x + enemy.width &&
+                        bullet.y + bullet.radius > enemy.y &&
+                        bullet.y - bullet.radius < enemy.y + enemy.height
+                    ) {
+                        // Remove bullet
+                        hero.bullets.splice(j, 1);
+                        
+                        // Reduce enemy health
+                        enemy.health--;
+                        
+                        // If enemy is destroyed
+                        if (enemy.health <= 0) {
+                            // Get enemy value before removing it
+                            const enemyValue = enemy.value;
+                            
+                            // Remove enemy
+                            enemies.splice(i, 1);
+                            
+                            // Add money popup
+                            addMoneyPopup(enemy.x + enemy.width/2, enemy.y, enemyValue);
+                            
+                            // Increase score
+                            score += enemyValue;
+                            
+                            // Spawn a new enemy if below max
+                            if (enemies.length < currentMaxEnemies) {
+                                spawnEnemy(enemyImg, enemy2Img);
+                            }
+                            
+                            // Check win condition
+                            if (score >= winScore) {
+                                gameWin();
+                            }
+                        } else {
+                            // Enemy hit but not destroyed - show damage indicator
+                            addMoneyPopup(enemy.x + enemy.width/2, enemy.y, 0);
+                        }
+                        
+                        break;
+                    }
+                }
+                
+                // Check for collision with hero
+                if (
+                    !hero.invulnerable &&
+                    hero.x < enemy.x + enemy.width &&
+                    hero.x + hero.width > enemy.x &&
+                    hero.y < enemy.y + enemy.height &&
+                    hero.y + hero.height > enemy.y
+                ) {
+                    if (shieldActive) {
+                        // Shield protects from one collision
+                        shieldActive = false;
+                        shieldDuration = 0;
+                        
+                        // Remove the enemy
+                        enemies.splice(i, 1);
+                        if (enemies.length < currentMaxEnemies) {
+                            spawnEnemy(enemyImg, enemy2Img);
+                        }
+                    } else {
+                        // Lose a life
+                        lives--;
+                        
+                        // Remove the enemy
+                        enemies.splice(i, 1);
+                        
+                        if (lives <= 0) {
+                            // Game over if no lives left
+                            gameOver();
+                            return;
+                        } else {
+                            // Temporary invulnerability
+                            hero.invulnerable = true;
+                            hero.invulnerabilityTime = hero.maxInvulnerabilityTime;
+                        }
+                    }
+                }
+            }
+            
+            // Update powerups
+            for (let i = powerups.length - 1; i >= 0; i--) {
+                const powerup = powerups[i];
+                
+                // Check for collision with hero
+                if (
+                    hero.x < powerup.x + powerup.width &&
+                    hero.x + hero.width > powerup.x &&
+                    hero.y < powerup.y + powerup.height &&
+                    hero.y + hero.height > powerup.y
+                ) {
+                    // Collect powerup
+                    const powerupType = powerup.type;
+                    powerups.splice(i, 1);
+                    
+                    if (powerupType === 'weapon') {
+                        powerupCount++;
+                    } else if (powerupType === 'shield') {
+                        shieldActive = true;
+                        shieldDuration = maxShieldDuration;
+                    }
+                }
+            }
+            
+            // Randomly spawn powerups - increased chance with difficulty
+            if (Math.random() < (powerupFrequency * difficultyFactor) && powerups.length < 3) {
+                spawnPowerup(powerupImg, bubbleImg);
+            }
+            
+            // Spawn additional enemies as difficulty increases
+            if (enemies.length < currentMaxEnemies && Math.random() < 0.01 * difficultyFactor) {
+                spawnEnemy(enemyImg, enemy2Img);
+            }
+        }
+        
+        // Render game
+        function render(heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg) {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw shooting orientation indicator
+            ctx.save();
+            ctx.translate(hero.x + hero.width / 2, hero.y + hero.height / 2);
+            ctx.rotate(hero.rotation);
+            
+            // Draw direction line
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 3]); // Dashed line
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(0, -60); // Line pointing forward
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw small crosshair at the end
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.beginPath();
+            ctx.moveTo(-5, -60);
+            ctx.lineTo(5, -60);
+            ctx.moveTo(0, -65);
+            ctx.lineTo(0, -55);
+            ctx.stroke();
+            
+            ctx.restore();
+            
+            // Draw hero
+            ctx.save();
+            ctx.translate(hero.x + hero.width / 2, hero.y + hero.height / 2);
+            ctx.rotate(hero.rotation);
+            
+            // Draw thruster flame when thrusting
+            if (hero.thrust) {
+                ctx.fillStyle = '#FF5500';
+                ctx.beginPath();
+                ctx.moveTo(-hero.width / 2, hero.height / 2);
+                ctx.lineTo(-hero.width / 2 - 5, hero.height / 2 + 10);
+                ctx.lineTo(-hero.width / 2 + 5, hero.height / 2 + 10);
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            // Flashing effect when invulnerable
+            if (!hero.invulnerable || Math.floor(Date.now() / 100) % 2 === 0) {
+                ctx.drawImage(heroImg, -hero.width / 2, -hero.height / 2, hero.width, hero.height);
+            }
+            
+            // Draw shield if active
+            if (shieldActive) {
+                const bubbleSize = Math.max(hero.width, hero.height) * 2;
+                ctx.globalAlpha = 0.7;
+                ctx.drawImage(bubbleImg, -bubbleSize/2, -bubbleSize/2, bubbleSize, bubbleSize);
+                
+                // Make the shield pulse
+                const pulseRate = 0.5;
+                const opacity = 0.5 + 0.3 * Math.sin(Date.now() * pulseRate / 1000);
+                ctx.globalAlpha = opacity;
+            }
+            
+            ctx.restore();
+            
+            // Draw bullets
+            ctx.fillStyle = 'white';
+            for (const bullet of hero.bullets) {
+                ctx.beginPath();
+                ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Draw enemies
+            for (const enemy of enemies) {
+                ctx.save();
+                ctx.translate(enemy.x + enemy.width / 2, enemy.y + enemy.height / 2);
+                ctx.rotate(enemy.rotation);
+                
+                ctx.drawImage(enemy.img, -enemy.width / 2, -enemy.height / 2, enemy.width, enemy.height);
+                
+                // Display health indicator for enemies that take multiple hits
+                if (enemy.type === 2 && enemy.health < 2) {
+                    ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+                    ctx.fillRect(-enemy.width / 2, -enemy.height / 2, enemy.width, enemy.height);
+                }
+                
+                ctx.restore();
+            }
+            
+            // Draw warnings for off-screen enemies
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#FF3333';
+            ctx.fillStyle = '#FF3333';
+            
+            for (const enemy of enemies) {
+                // Check if enemy is off-screen or near the edge
+                const isOffLeft = enemy.x + enemy.width < 0;
+                const isOffRight = enemy.x > canvas.width;
+                const isOffTop = enemy.y + enemy.height < 0;
+                const isOffBottom = enemy.y > canvas.height;
+                
+                const isNearLeft = enemy.x < warningDistance && enemy.x > 0;
+                const isNearRight = enemy.x + enemy.width > canvas.width - warningDistance && enemy.x < canvas.width;
+                const isNearTop = enemy.y < warningDistance && enemy.y > 0;
+                const isNearBottom = enemy.y + enemy.height > canvas.height - warningDistance && enemy.y < canvas.height;
+                
+                if (isOffLeft || isOffRight || isOffTop || isOffBottom || 
+                    isNearLeft || isNearRight || isNearTop || isNearBottom) {
+                    
+                    // Calculate angle from center of screen to enemy
+                    const dx = enemy.x + enemy.width/2 - canvas.width/2;
+                    const dy = enemy.y + enemy.height/2 - canvas.height/2;
+                    const angle = Math.atan2(dy, dx);
+                    
+                    // Calculate position on screen edge
+                    const margin = 30;
+                    let arrowX, arrowY;
+                    
+                    // Clamp position to screen edge with margin
+                    if (Math.abs(dx) > Math.abs(dy)) {
+                        // Left or right edge
+                        arrowX = dx > 0 ? canvas.width - margin : margin;
+                        arrowY = canvas.height/2 + dy * (arrowX - canvas.width/2) / dx;
+                    } else {
+                        // Top or bottom edge
+                        arrowY = dy > 0 ? canvas.height - margin : margin;
+                        arrowX = canvas.width/2 + dx * (arrowY - canvas.height/2) / dy;
+                    }
+                    
+                    // Make sure arrow stays on screen
+                    arrowX = Math.max(margin, Math.min(canvas.width - margin, arrowX));
+                    arrowY = Math.max(margin, Math.min(canvas.height - margin, arrowY));
+                    
+                    // Draw warning arrow
+                    ctx.save();
+                    ctx.translate(arrowX, arrowY);
+                    ctx.rotate(angle);
+                    
+                    // Pulsing effect
+                    const pulse = 0.7 + 0.3 * Math.sin(Date.now() * 0.01);
+                    
+                    // Different color for type 2 enemies
+                    if (enemy.type === 2) {
+                        ctx.strokeStyle = '#FF8800';
+                        ctx.fillStyle = '#FF8800';
+                    }
+                    
+                    // Draw triangle
+                    ctx.beginPath();
+                    ctx.moveTo(10, 0);
+                    ctx.lineTo(-5, -5);
+                    ctx.lineTo(-5, 5);
+                    ctx.closePath();
+                    ctx.stroke();
+                    ctx.globalAlpha = pulse;
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+                    
+                    // Different marker for type 2 enemies
+                    if (enemy.type === 2) {
+                        ctx.fillStyle = '#FF8800';
+                        ctx.beginPath();
+                        ctx.arc(0, 0, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    
+                    ctx.restore();
+                }
+            }
+            
+            // Draw powerups
+            for (const powerup of powerups) {
+                ctx.drawImage(powerup.img, powerup.x, powerup.y, powerup.width, powerup.height);
+            }
+            
+            // Draw money popups
+            for (const popup of moneyPopups) {
+                ctx.save();
+                ctx.globalAlpha = popup.opacity;
+                ctx.font = `${Math.round(16 * popup.scale)}px Arial`;
+                
+                if (popup.amount > 0) {
+                    ctx.fillStyle = '#FFFF00';
+                    // Format the value in millions
+                    const formattedValue = '$' + (popup.amount / 1000000).toFixed(1) + 'M';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(formattedValue, popup.x, popup.y);
+                } else {
+                    // Just show "HIT!" for damage indicators
+                    ctx.fillStyle = '#FF8800';
+                    ctx.textAlign = 'center';
+                    ctx.fillText("HIT!", popup.x, popup.y);
+                }
+                
+                ctx.restore();
+            }
+            
+            // Draw score
+            const uiScale = Math.min(canvas.width, canvas.height) / 800;
+            const fontSize = Math.round(20 * uiScale);
+            const padding = Math.round(20 * uiScale);
+            
+            ctx.fillStyle = 'white';
+            ctx.font = `${fontSize}px Arial`;
+            ctx.textAlign = 'left';
+            ctx.fillText(`Score: $${formatScore(score)}`, padding, padding + fontSize);
+            
+            // Draw powerup count
+            ctx.fillText(`Weapon Power: ${powerupCount}`, padding, padding + fontSize*2);
+            
+            // Draw shield status
+            if (shieldActive) {
+                const shieldPercent = Math.round((shieldDuration / maxShieldDuration) * 100);
+                ctx.fillText(`Shield: ${shieldPercent}%`, padding, padding + fontSize*3);
+            }
+            
+            // Draw lives
+            ctx.fillText('Lives:', padding, canvas.height - padding);
+            for (let i = 0; i < lives; i++) {
+                drawHeart(padding + 90 + (i * 30) * uiScale, canvas.height - padding - 5, 20 * uiScale);
+            }
+            
+            // Draw difficulty indicator
+            const difficultyPercent = Math.round((difficultyFactor - 1) * 100);
+            ctx.textAlign = 'right';
+            ctx.fillText(`Difficulty: ${difficultyPercent}%`, canvas.width - padding, padding + fontSize);
+            
+            // Draw progress bar
+            const barWidth = 200 * uiScale;
+            const barHeight = 20 * uiScale;
+            const barX = canvas.width - padding - barWidth;
+            const barY = canvas.height - padding - barHeight;
+            
+            // Background
+            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+            
+            // Progress
+            const progress = Math.min(score / winScore, 1);
+            ctx.fillStyle = 'rgba(0,255,0,0.6)';
+            ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+            
+            // Progress text
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${Math.floor(progress * 100)}%`, barX + barWidth/2, barY + barHeight/2 + fontSize/3);
+        }
+        
+        // Format score in billions format
+        function formatScore(score) {
+            if (score >= 1000000000) {
+                return (score / 1000000000).toFixed(2) + 'B';
+            } else {
+                return (score / 1000000).toFixed(2) + 'M';
+            }
+        }
+        
+        // Game loop
+        function gameLoop(heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg) {
+            update(heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg);
+            render(heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg);
+            
+            if (gameRunning) {
+                requestAnimationFrame(() => gameLoop(heroImg, enemyImg, enemy2Img, powerupImg, bubbleImg));
+            }
+        }
+        
+        // Game over
+        function gameOver() {
+            gameRunning = false;
+            gameOverScreen.style.display = 'flex';
+        }
+        
+        // Game win
+        function gameWin() {
+            gameRunning = false;
+            gameWinScreen.style.display = 'flex';
+        }
+        
+        // Event listeners
+        window.addEventListener('keydown', e => {
+            keys[e.key] = true;
+            
+            // Space to fire
+            if (e.key === ' ' && gameRunning) {
+                fireBullet();
+            }
+            
+            // R to restart
+            if (e.key === 'r' && !gameRunning) {
+                init(
+                    document.images[0] || null,
+                    document.images[1] || null,
+                    document.images[2] || null,
+                    document.images[3] || null,
+                    document.images[4] || null
+                );
+            }
+        });
+        
+        window.addEventListener('keyup', e => {
+            keys[e.key] = false;
+        });
+        
+        // Handle window resize
+        window.addEventListener('resize', resizeCanvas);
+    </script>
+</body>
+</html>
